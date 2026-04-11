@@ -64,3 +64,19 @@ $ forge --help
 $ anvil --help
 $ cast --help
 ```
+
+
+    "contractName": "Authentication",
+      "contractAddress": "0xdad5e14c6015b40e451f6c4932c877b4189936bc",
+
+      "contractName": "RubbiToken",
+      "contractAddress": "0xa76255f814b9bf39f52e2a04cb5d5d7fa12d3113",
+
+      "contractName": "ModalContract",
+      "contractAddress": "0x8cbffa1c85e59878dc8cd7f7a05b53e25efbebcf",
+
+      "contractName": "SubscriptionService",
+      "contractAddress": "0xc1cb9ee3b2426c6cade12fcf9580dd80aad7aaec",
+
+      "contractName": "SalaryStreaming",
+      "contractAddress": "0x12fbe72987bff3653e84e03894eb085c760a8a0e",
