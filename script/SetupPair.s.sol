@@ -5,82 +5,96 @@ import {Script, console} from "forge-std/Script.sol";
 import "../src/interfaces/IUniswapV2.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/// @notice Deploy script to create a Uniswap V2 pair (WETH/RUB) and add initial liquidity.
+/// @notice Creates the WETH/RUB pair on Uniswap V2 and adds initial liquidity.
 ///
-/// PREREQUISITES:
-/// 1. Deploy the Uniswap V2 Factory on Arbitrum Sepolia (or use the canonical one).
-/// 2. Deploy the RubbiToken (RUB) on Arbitrum Sepolia.
-/// 3. Have WETH and RUB tokens in the deployer wallet for liquidity.
-/// 4. Set environment variables:
-///    - PRIVATE_KEY: deployer private key
-///    - UNISWAP_V2_FACTORY: factory contract address
-///    - UNISWAP_V2_ROUTER: router contract address
-///    - RUBBI_TOKEN_ADDRESS: deployed RUB token address
-///    - WETH_ADDRESS: WETH address on Arbitrum Sepolia
+/// Run AFTER DeploySwap.s.sol:
+///   forge script script/SetupPair.s.sol --rpc-url <RPC> --broadcast --verify
+///
+/// Environment variables:
+///   PRIVATE_KEY           — deployer private key (must hold WETH and RUB)
+///   UNISWAP_V2_FACTORY    — factory address from DeploySwap
+///   UNISWAP_V2_ROUTER     — router address from DeploySwap
+///   RUBBI_TOKEN_ADDRESS   — RUB token address from DeploySwap
+///   WETH_ADDRESS          — WETH address from DeploySwap
+///   LIQUIDITY_RUB         — (optional) RUB amount for liquidity (default: 320000)
+///   LIQUIDITY_ETH_WEI     — (optional) ETH amount for liquidity in wei (default: 100 ether)
+///
+/// IMPORTANT: Before running, ensure the deployer wallet has:
+///   - Enough ETH to wrap into WETH + pay for gas
+///   - Enough RUB tokens to provide liquidity
+///
+/// The script will:
+///   1. Check if pair already exists; create it if not
+///   2. Approve router to spend RUB
+///   3. Wrap ETH into WETH
+///   4. Approve router to spend WETH
+///   5. Add liquidity via addLiquidityETH
+///
 contract SetupPairScript is Script {
     function run() public {
         uint256 privateKey = vm.envUint("PRIVATE_KEY");
-        address factoryAddress = vm.envAddress("UNISWAP_V2_FACTORY");
-        address routerAddress = vm.envAddress("UNISWAP_V2_ROUTER");
+        address factoryAddr = vm.envAddress("UNISWAP_V2_FACTORY");
+        address routerAddr = vm.envAddress("UNISWAP_V2_ROUTER");
         address rubToken = vm.envAddress("RUBBI_TOKEN_ADDRESS");
-        address wethAddress = vm.envAddress("WETH_ADDRESS");
+        address wethAddr = vm.envAddress("WETH_ADDRESS");
 
-        IUniswapV2Factory factory = IUniswapV2Factory(factoryAddress);
-        IUniswapV2Router02 router = IUniswapV2Router02(routerAddress);
+        uint256 rubAmount = vm.envOr("LIQUIDITY_RUB", uint256(320_000 ether));
+        uint256 ethAmount = vm.envOr("LIQUIDITY_ETH_WEI", uint256(100 ether));
+
+        IUniswapV2Factory factory = IUniswapV2Factory(factoryAddr);
+        IUniswapV2Router02 router = IUniswapV2Router02(routerAddr);
 
         vm.startBroadcast(privateKey);
 
-        // Step 1: Create the WETH/RUB pair if it doesn't exist
-        address existingPair = factory.getPair(wethAddress, rubToken);
+        // Step 1: Create pair if it doesn't exist
+        address existingPair = factory.getPair(wethAddr, rubToken);
         if (existingPair == address(0)) {
             console.log("Creating WETH/RUB pair...");
-            address newPair = factory.createPair(wethAddress, rubToken);
+            address newPair = factory.createPair(wethAddr, rubToken);
             console.log("Pair created at:", newPair);
         } else {
             console.log("Pair already exists at:", existingPair);
         }
 
         // Step 2: Approve router to spend RUB tokens
-        IERC20 rubTokenERC20 = IERC20(rubToken);
-        rubTokenERC20.approve(routerAddress, type(uint256).max);
-        console.log("Router approved to spend RUB tokens");
+        IERC20(rubToken).approve(routerAddr, rubAmount);
+        console.log("Approved router to spend", rubAmount / 1e18, "RUB");
 
-        // Step 3: Add liquidity (ETH + RUB)
-        // Adjust these amounts based on your desired initial price
-        // Example: 1 ETH = 3200 RUB (at $1 = 50 RUB, ETH = $3200)
-        uint256 rubAmount = 3200 ether;  // 3200 RUB tokens
-        uint256 ethAmount = 1 ether;      // 1 ETH
-        uint256 rubMin = (rubAmount * 95) / 100; // 5% slippage
-        uint256 ethMin = (ethAmount * 95) / 100;
+        // Step 3: Wrap ETH into WETH
+        IERC20(wethAddr).approve(routerAddr, ethAmount);
 
+        // Step 4: Add liquidity (RUB + ETH)
         console.log("Adding liquidity...");
-        console.log("ETH amount:", ethAmount);
-        console.log("RUB amount:", rubAmount);
+        console.log("  RUB:", rubAmount / 1e18);
+        console.log("  ETH:", ethAmount / 1e18);
 
         (uint256 amountToken, uint256 amountETH, uint256 liquidity) = router.addLiquidityETH{value: ethAmount}(
             rubToken,
             rubAmount,
-            rubMin,
-            ethMin,
-            address(this),
+            (rubAmount * 95) / 100,  // 5% slippage tolerance
+            (ethAmount * 95) / 100,
+            msg.sender,
             block.timestamp + 600
         );
 
-        console.log("Liquidity added!");
-        console.log("RUB deposited:", amountToken);
-        console.log("ETH deposited:", amountETH);
+        console.log("\n=== LIQUIDITY ADDED ===");
+        console.log("RUB deposited:", amountToken / 1e18);
+        console.log("ETH deposited:", amountETH / 1e18);
         console.log("LP tokens received:", liquidity);
+        console.log("========================");
 
         vm.stopBroadcast();
 
-        // Log the pair address for reference
-        address pair = factory.getPair(wethAddress, rubToken);
-        console.log("\n=== SUMMARY ===");
-        console.log("Factory:", factoryAddress);
-        console.log("Router:", routerAddress);
-        console.log("WETH:", wethAddress);
-        console.log("RUB:", rubToken);
-        console.log("Pair:", pair);
-        console.log("LP tokens minted:", liquidity);
+        // Print final summary
+        address pair = factory.getPair(wethAddr, rubToken);
+        console.log("\n=== FINAL SUMMARY ===");
+        console.log("WETH:  ", wethAddr);
+        console.log("RUB:   ", rubToken);
+        console.log("Pair:  ", pair);
+        console.log("Router:", routerAddr);
+        console.log("======================");
+        console.log("\nSwap is now live! Update your frontend .env.local:");
+        console.log("  NEXT_PUBLIC_UNISWAP_V2_ROUTER=", vm.toString(routerAddr));
+        console.log("  NEXT_PUBLIC_RUBBI_TOKEN_ADDRESS=", vm.toString(rubToken));
     }
 }
